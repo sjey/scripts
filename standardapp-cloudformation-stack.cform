@@ -1,0 +1,303 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "CompanyName Standard Application Template",
+    "Parameters": {
+      "AppVersion": {
+          "Description": "Application Version (usually the Bamboo Build Number)",
+          "Type": "String",
+          "Default": "42"
+      },
+      "AppName": {
+          "Description": "Bamboo Application Name (eg. JobScheduler)",
+          "Type": "String",
+          "Default": "JobScheduler"
+      },
+      "AssociatePublicIP": {
+          "Description": "Associate a Public IP Address",
+          "Type": "String",
+          "Default": "false",
+          "AllowedValues": ["true","false"],
+          "ConstraintDescription" : "Must specify true or false"
+      },
+      "AppBucketName": {
+          "Description": "The Bucket where the App Lives",
+          "Type": "String",
+          "Default": "apps-bucket"
+      },
+      "AppRegion": {
+          "Description": "The Region the application runs in (eg. us-east-1 or us-west-2)",
+          "Type": "String",
+          "Default": "us-west-2"
+      },
+      "Environment": {
+          "Description": "Environment to Create (PROD, UAT, QA etc)",
+          "Type": "String",
+          "Default": "QA"
+      },
+      "Product": {
+          "Description": "The product group this belongs to (eg. product1, product2, product3 etc)",
+          "Type": "String",
+          "Default": "null"
+      },
+      "PuppetRole": {
+          "Description": "Puppet Role for the Server (eg. webserver, appserver, workernode)",
+          "Type": "String",
+          "Default": "appserver"
+      },
+      "IAMRole": {
+          "Description": "The IAM Instance Profile Name for the Servers",
+          "Type": "String",
+          "Default": "qa_appname_instance_profile"
+      },
+      "BaseAMIId": {
+          "Description": "The AMI-ID of the Base image for the stack",
+          "Type": "String",
+          "Default": "ami-xxxxxxxx"
+      },
+      "Subnets": {
+          "Description": "Comme Separated List of Subnets",
+          "Type": "CommaDelimitedList",
+          "Default": "subnet-xxxxxxxxx,subnet-xxxxxxxxx"
+      },
+      "SecurityGroups": {
+          "Description": "Comma Separated List of Security Group IDs",
+          "Type": "CommaDelimitedList",
+          "Default": "sg-xxxxxxxx"
+      },
+      "LoadBalancerName": {
+          "Description": "Name of the Loadbalancer",
+          "Type": "CommaDelimitedList",
+          "Default": "elb-app-name"
+      },
+      "KeyName": {
+          "Description": "The Private Key Name to use",
+          "Type": "String",
+          "Default": "sshkey_name"
+      },
+      "InstanceType": {
+          "Description": "The Type of Instance (t2.micro, t2.small, t2.medium, m3.medium, m3.large etc)",
+          "Type": "String",
+          "Default": "t2.micro"
+      },
+      "ASNotificationTopic": {
+          "Description": "The ARN of the AutoScaling Notification Topic - eg: arn:aws:sns:ap-southeast-2:12345678910:AutoscalinggroupNotify",
+          "Type": "String",
+          "Default": "arn:aws:sns:ap-southeast-2:12345678910:AutoscalinggroupNotify"
+      },
+      "MinInstances": {
+          "Description": "Minimum Size for the AutoScaling group",
+          "Type": "Number",
+          "Default": "2"
+      },
+      "MaxInstances": {
+          "Description": "Maximum Size for the AutoScaling group",
+          "Type": "Number",
+          "Default": "4"
+      },
+      "DesiredInstances": {
+          "Description": "Desired Size for the AutoScaling group",
+          "Type": "Number",
+          "Default": "2"
+      },
+      "RootVolumeSize": {
+          "Description": "The size of the Root volume (/dev/sda1) in GB",
+          "Type": "Number",
+          "Default": "20"
+      }
+    },
+
+    "Conditions": {
+      "UseELB": {
+        "Fn::Not": [
+            {
+                "Fn::Equals": [
+                    {
+                        "Fn::Select": [
+                            "0",
+                            {
+                                "Ref": "LoadBalancerName"
+                            }
+                        ]
+                    },
+                    ""
+                ]
+            }
+        ]
+      }
+    },
+
+    "Resources": {
+
+    "ServerGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "CreationPolicy" : {
+        "ResourceSignal" : {
+          "Timeout" : "PT15M",
+          "Count"   : { "Ref": "DesiredInstances" }
+        }
+      },
+
+      "UpdatePolicy" : {
+        "AutoScalingRollingUpdate" : {
+          "MaxBatchSize" : "1",
+          "MinInstancesInService" : { "Ref": "MinInstances" },
+          "PauseTime" : "PT15M",
+          "WaitOnResourceSignals": "true"
+        }
+      },
+
+      "Properties": {
+        "HealthCheckType":  { 
+            "Fn::If" : [
+                  "UseELB",
+                  "ELB",
+                  "EC2"
+            ]
+        },
+        "HealthCheckGracePeriod": "300",
+        "Cooldown": "120",
+        "AvailabilityZones":  [ "ap-southeast-2a", "ap-southeast-2b" ],
+        "VPCZoneIdentifier": { "Ref": "Subnets" },
+        "LaunchConfigurationName": { "Ref": "LaunchConfig" },
+        "DesiredCapacity" : { "Ref": "DesiredInstances" },
+        "MinSize": { "Ref": "MinInstances" },
+        "MaxSize": { "Ref": "MaxInstances" },
+        "LoadBalancerNames": {
+              "Fn::If" : [
+                    "UseELB",
+                    {"Ref" : "LoadBalancerName"},
+                    {"Ref" : "AWS::NoValue"}
+              ]
+        },
+        "Tags" : [ {
+         "Key" : "PuppetRole",
+         "Value" : { "Ref": "PuppetRole" },
+         "PropagateAtLaunch" : "true"
+      }, {
+         "Key" : "Environment",
+         "Value" : { "Ref": "Environment" } ,
+         "PropagateAtLaunch" : "true"
+      }, { 
+         "Key": "AppVersion", 
+         "Value":  { "Ref": "AppVersion" },
+         "PropagateAtLaunch" : "true"
+      },{ 
+         "Key": "Product", 
+         "Value":  { "Ref": "Product" },
+         "PropagateAtLaunch" : "true"
+      },{ 
+         "Key": "AppName", 
+         "Value":  { "Ref": "AppName" },
+         "PropagateAtLaunch" : "true"
+      } ],
+        "NotificationConfiguration" : {
+         "TopicARN" : { "Ref" : "ASNotificationTopic" },
+         "NotificationTypes" : [
+            "autoscaling:EC2_INSTANCE_LAUNCH",
+            "autoscaling:EC2_INSTANCE_LAUNCH_ERROR",
+            "autoscaling:EC2_INSTANCE_TERMINATE",
+            "autoscaling:EC2_INSTANCE_TERMINATE_ERROR"
+         ]
+      }
+      }
+    },
+    "LaunchConfig": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Metadata" : {
+        "Comment" : {"Fn::Join" : ["-",[ "LC", { "Ref": "PuppetRole" } ] ]},
+        "AWS::CloudFormation::Init" : {
+          "config" : {
+            "files" : {
+              "/etc/cfn/cfn-hup.conf" : {
+                "content" : { "Fn::Join" : ["", [
+                  "[main]\n",
+                  "stack=", { "Ref" : "AWS::StackId" }, "\n",
+                  "region=", { "Ref" : "AWS::Region" }, "\n"
+                ]]},
+                "mode"    : "000400",
+                "owner"   : "root",
+                "group"   : "root"
+              },
+              "/etc/cfn/hooks.d/cfn-auto-reloader.conf" : {
+                "content": { "Fn::Join" : ["", [
+                  "[cfn-auto-reloader-hook]\n",
+                  "triggers=post.update\n",
+                  "path=Resources.LaunchConfig.Metadata.AWS::CloudFormation::Init\n",
+                  "action=/opt/aws/bin/cfn-init -v ",
+                  "         --stack ", { "Ref" : "AWS::StackName" },
+                  "         --resource LaunchConfig ",
+                  "         --region ", { "Ref" : "AWS::Region" }, "\n",
+                  "runas=root\n"
+                ]]}
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "AssociatePublicIpAddress" : { "Ref": "AssociatePublicIP" },
+        "KeyName": { "Ref": "KeyName" },
+        "ImageId": { "Ref": "BaseAMIId" },
+        "SecurityGroups": { "Ref": "SecurityGroups" },
+        "InstanceType": { "Ref": "InstanceType" },
+        "BlockDeviceMappings" : [
+          {
+            "DeviceName" : "/dev/sda1",
+            "Ebs" : { 
+                    "VolumeSize" : { "Ref": "RootVolumeSize" }, 
+                    "VolumeType" : "gp2", 
+                    "DeleteOnTermination" : "true"
+                  } 
+          }
+        ],
+        "IamInstanceProfile": { "Ref": "IAMRole" },
+        "UserData"       : {
+                  "Fn::Base64": {
+                      "Fn::Join": [
+                          "",
+                          [
+                            "#cloud-config\n",
+                            "apt_update: true\n",
+                            "apt_upgrade: false\n",
+                            "preserve_hostname: true\n",
+                            "manage_etc_hosts: false\n",
+                            "bootcmd:\n",
+                            " - echo UTC > /etc/timezone\n",
+                            " - dpkg-reconfigure --frontend noninteractive tzdata\n",
+                            " - service rsyslog restart\n",
+                            " - service cron restart\n",
+                            " - echo ", { "Ref": "PuppetRole" }, " > /etc/APP_ROLE\n",
+                            " - echo ", { "Ref": "Environment" }, " > /etc/ENV\n",
+                            " - echo ", { "Ref": "AWS::Region" }, " > /etc/REGION\n",
+                            " - echo `curl -s -S http://169.254.169.254/latest/meta-data/instance-id` > /etc/INSTANCE_ID\n",
+                            " - hnamekey=`cat /etc/INSTANCE_ID | awk '{print substr($1,3); }'`\n",
+                            " - envname=`cat /etc/ENV | tr '[:upper:]' '[:lower:]'`\n",
+                            " - rolname=`cat /etc/APP_ROLE | sed 's/server//g'`\n",
+                            " - echo $envname$rolname-$hnamekey > /etc/hostname; hostname -F /etc/hostname\n",
+                            " - sed -i -e '/^127.0.1.1/d' /etc/hosts; echo 127.0.1.1 $(hostname) >> /etc/hosts\n",
+                            " - aws ec2 create-tags --resources $(cat /etc/INSTANCE_ID) --tags Key=Name,Value=$(hostname) --region $(cat /etc/REGION)\n",
+                            " - aws ec2 create-tags --resources $(cat /etc/INSTANCE_ID) --tags Key=Environment,Value=$(cat /etc/ENV) --region $(cat /etc/REGION)\n",
+                            " - aws ec2 create-tags --resources $(cat /etc/INSTANCE_ID) --tags Key=PuppetRole,Value=$(cat /etc/APP_ROLE) --region $(cat /etc/REGION)\n",  
+                            "runcmd:\n",                        
+                            " - puppet agent --enable\n",
+                            " - puppet agent -t\n",                                      
+                            " - aws s3 cp --region=", { "Ref" : "AWS::Region" }, " s3://", { "Ref": "AppBucketName" }, "/", { "Ref": "AppName" }, "/", { "Ref": "AppVersion" }, "/", { "Ref": "AppName" },"-bin.zip /opt/companyname/", { "Ref": "AppName" }, "/\n",
+                            " - unzip -o /opt/companyname/", { "Ref": "AppName" }, "/", { "Ref": "AppName" }, "-bin.zip -d /opt/companyname/", { "Ref": "AppName" }, "/\n",
+                            " - echo ", { "Ref": "Environment" }, " > /opt/companyname/", { "Ref": "AppName" }, "/etc/APP_ENV", "\n", 
+                            " - echo ", { "Ref": "AppName" }, " > /opt/companyname/", { "Ref": "AppName" }, "/etc/APP_NAME", "\n", 
+                            " - echo ", { "Ref": "AppRegion" }, " > /opt/companyname/", { "Ref": "AppName" }, "/etc/APP_REGION", "\n", 
+                            " - chown -R companyname:companyname /opt/companyname/*\n",                       
+                            " - cp /opt/companyname/", { "Ref": "AppName" }, "/app.conf /etc/init/", { "Ref": "AppName" }, ".conf\n",
+                            " - ln -s /opt/companyname/", { "Ref": "AppName" }, "/var/log /var/log/companyname/", { "Ref": "AppName" }, "\n",
+                            " - start ", { "Ref": "AppName" }, "\n", 
+                            " - /usr/local/bin/cfn-signal --success true --stack ", { "Ref" : "AWS::StackName" }," --resource ServerGroup --region ", { "Ref" : "AWS::Region" }, "\n"
+                          ]
+                      ]
+                  }
+              }
+      }
+    }
+
+}
+
+}
